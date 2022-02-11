@@ -21,18 +21,17 @@
 # SOFTWARE.
 
 
-import click
 import re
-
 from datetime import datetime, timedelta
 
-from blockchainetl.logging_utils import logging_basic_config
-from ethereumetl.web3_utils import build_web3
+import click
 
+from blockchainetl.logging_utils import logging_basic_config
 from ethereumetl.jobs.export_all_common import export_all_common
 from ethereumetl.providers.auto import get_provider_from_uri
 from ethereumetl.service.eth_service import EthService
 from ethereumetl.utils import check_classic_provider_uri
+from ethereumetl.web3_utils import build_web3
 
 logging_basic_config()
 
@@ -112,13 +111,16 @@ def get_partitions(start, end, partition_batch_size, provider_uri):
 @click.option('-p', '--provider-uri', default='https://mainnet.infura.io', show_default=True, type=str,
               help='The URI of the web3 provider e.g. '
                    'file://$HOME/Library/Ethereum/geth.ipc or https://mainnet.infura.io')
-@click.option('-o', '--output-dir', default='output', show_default=True, type=str, help='Output directory, partitioned in Hive style.')
+@click.option('-o', '--output-dir', default='output', show_default=True, type=str,
+              help='Output directory, partitioned in Hive style.')
 @click.option('-w', '--max-workers', default=5, show_default=True, type=int, help='The maximum number of workers.')
-@click.option('-B', '--export-batch-size', default=100, show_default=True, type=int, help='The number of requests in JSON RPC batches.')
+@click.option('-B', '--export-batch-size', default=100, show_default=True, type=int,
+              help='The number of requests in JSON RPC batches.')
+@click.option('-sb', '--s3-bucket', default='ifcrypto', show_default=True, type=str)
 @click.option('-c', '--chain', default='ethereum', show_default=True, type=str, help='The chain network to connect to.')
-def export_all(start, end, partition_batch_size, provider_uri, output_dir, max_workers, export_batch_size,
+def export_all(start, end, partition_batch_size, provider_uri, output_dir, max_workers, export_batch_size, s3_bucket,
                chain='ethereum'):
     """Exports all data for a range of blocks."""
     provider_uri = check_classic_provider_uri(chain, provider_uri)
     export_all_common(get_partitions(start, end, partition_batch_size, provider_uri),
-                      output_dir, provider_uri, max_workers, export_batch_size)
+                      output_dir, provider_uri, max_workers, export_batch_size, s3_bucket)

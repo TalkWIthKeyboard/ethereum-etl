@@ -19,28 +19,23 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
-
 import csv
 import logging
 import os
 import shutil
 from time import time
 
-from ethereumetl.csv_utils import set_max_field_size_limit
 from blockchainetl.file_utils import smart_open
+from ethereumetl.csv_utils import set_max_field_size_limit
 from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
-from ethereumetl.jobs.export_contracts_job import ExportContractsJob
 from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
 from ethereumetl.jobs.export_token_transfers_job import ExportTokenTransfersJob
-from ethereumetl.jobs.export_tokens_job import ExportTokensJob
 from ethereumetl.jobs.exporters.blocks_and_transactions_item_exporter import blocks_and_transactions_item_exporter
-from ethereumetl.jobs.exporters.contracts_item_exporter import contracts_item_exporter
 from ethereumetl.jobs.exporters.receipts_and_logs_item_exporter import receipts_and_logs_item_exporter
 from ethereumetl.jobs.exporters.token_transfers_item_exporter import token_transfers_item_exporter
-from ethereumetl.jobs.exporters.tokens_item_exporter import tokens_item_exporter
 from ethereumetl.jobs.extract_token_transfers_job import ExtractTokenTransfersJob
 from ethereumetl.providers.auto import get_provider_from_uri
+from ethereumetl.service.aws_service import AWSService
 from ethereumetl.thread_local_proxy import ThreadLocalProxy
 from ethereumetl.web3_utils import build_web3
 
@@ -64,12 +59,21 @@ def extract_csv_column_unique(input, output, column):
             output_file.write(row[column] + '\n')
 
 
-def export_all_common(partitions, output_dir, provider_uri, max_workers, batch_size):
+def remove_if_exists(path: str):
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+
+
+def export_all_common(partitions, output_dir, provider_uri, max_workers, batch_size, bucket):
+    aws_service = AWSService(s3_bucket=bucket)
 
     for batch_start_block, batch_end_block, partition_dir in partitions:
         # # # start # # #
 
         start_time = time()
+
+        if os.path.isdir(output_dir):
+            shutil.rmtree(output_dir)
 
         padded_batch_start_block = str(batch_start_block).zfill(8)
         padded_batch_end_block = str(batch_end_block).zfill(8)
@@ -178,43 +182,6 @@ def export_all_common(partitions, output_dir, provider_uri, max_workers, batch_s
                 export_logs=logs_file is not None)
             job.run()
 
-        # # # contracts # # #
-
-        contract_addresses_file = '{cache_output_dir}/contract_addresses_{file_name_suffix}.csv'.format(
-            cache_output_dir=cache_output_dir,
-            file_name_suffix=file_name_suffix,
-        )
-        logger.info('Extracting contract_address from receipt file {receipts_file}'.format(
-            receipts_file=receipts_file
-        ))
-        extract_csv_column_unique(receipts_file, contract_addresses_file, 'contract_address')
-
-        contracts_output_dir = '{output_dir}/contracts{partition_dir}'.format(
-            output_dir=output_dir,
-            partition_dir=partition_dir,
-        )
-        os.makedirs(os.path.dirname(contracts_output_dir), exist_ok=True)
-
-        contracts_file = '{contracts_output_dir}/contracts_{file_name_suffix}.csv'.format(
-            contracts_output_dir=contracts_output_dir,
-            file_name_suffix=file_name_suffix,
-        )
-        logger.info('Exporting contracts from blocks {block_range} to {contracts_file}'.format(
-            block_range=block_range,
-            contracts_file=contracts_file,
-        ))
-
-        with smart_open(contract_addresses_file, 'r') as contract_addresses_file:
-            contract_addresses = (contract_address.strip() for contract_address in contract_addresses_file
-                                  if contract_address.strip())
-            job = ExportContractsJob(
-                contract_addresses_iterable=contract_addresses,
-                batch_size=batch_size,
-                batch_web3_provider=ThreadLocalProxy(lambda: get_provider_from_uri(provider_uri, batch=True)),
-                item_exporter=contracts_item_exporter(contracts_file),
-                max_workers=max_workers)
-            job.run()
-
         # # # token_transfers # # #
 
         token_transfers_output_dir = '{output_dir}/token_transfers{partition_dir}'.format(
@@ -253,43 +220,12 @@ def export_all_common(partitions, output_dir, provider_uri, max_workers, batch_s
 
                 job.run()
 
-        # # # tokens # # #
-
-        if token_transfers_file is not None:
-            token_addresses_file = '{cache_output_dir}/token_addresses_{file_name_suffix}'.format(
-                cache_output_dir=cache_output_dir,
-                file_name_suffix=file_name_suffix,
-            )
-            logger.info('Extracting token_address from token_transfers file {token_transfers_file}'.format(
-                token_transfers_file=token_transfers_file,
-            ))
-            extract_csv_column_unique(token_transfers_file, token_addresses_file, 'token_address')
-
-            tokens_output_dir = '{output_dir}/tokens{partition_dir}'.format(
-                output_dir=output_dir,
-                partition_dir=partition_dir,
-            )
-            os.makedirs(os.path.dirname(tokens_output_dir), exist_ok=True)
-
-            tokens_file = '{tokens_output_dir}/tokens_{file_name_suffix}.csv'.format(
-                tokens_output_dir=tokens_output_dir,
-                file_name_suffix=file_name_suffix,
-            )
-            logger.info('Exporting tokens from blocks {block_range} to {tokens_file}'.format(
-                block_range=block_range,
-                tokens_file=tokens_file,
-            ))
-
-            with smart_open(token_addresses_file, 'r') as token_addresses:
-                job = ExportTokensJob(
-                    token_addresses_iterable=(token_address.strip() for token_address in token_addresses),
-                    web3=ThreadLocalProxy(lambda: build_web3(get_provider_from_uri(provider_uri))),
-                    item_exporter=tokens_item_exporter(tokens_file),
-                    max_workers=max_workers)
-                job.run()
+        # # # upload all to s3 # # #
+        shutil.rmtree(os.path.dirname(cache_output_dir))
+        aws_service.copy_dict_to_s3(output_dir)
+        shutil.rmtree(output_dir)
 
         # # # finish # # #
-        shutil.rmtree(os.path.dirname(cache_output_dir))
         end_time = time()
         time_diff = round(end_time - start_time, 5)
         logger.info('Exporting blocks {block_range} took {time_diff} seconds'.format(
