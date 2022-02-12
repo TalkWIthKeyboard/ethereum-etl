@@ -21,6 +21,8 @@
 # SOFTWARE.
 
 from blockchainetl.logging_utils import logging_basic_config
+from ethereumetl.cli.export_traces_and_contracts import export_traces_and_contracts
+
 logging_basic_config()
 
 import click
@@ -56,6 +58,7 @@ def cli(ctx):
 
 # export
 cli.add_command(export_all, "export_all")
+cli.add_command(export_traces_and_contracts, "export_traces_and_contracts")
 cli.add_command(export_blocks_and_transactions, "export_blocks_and_transactions")
 cli.add_command(export_origin, "export_origin")
 cli.add_command(export_receipts_and_logs, "export_receipts_and_logs")

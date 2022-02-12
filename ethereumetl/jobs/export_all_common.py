@@ -23,6 +23,7 @@ import csv
 import logging
 import os
 import shutil
+import sys
 from time import time
 
 from blockchainetl.file_utils import smart_open
@@ -30,9 +31,13 @@ from ethereumetl.csv_utils import set_max_field_size_limit
 from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
 from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
 from ethereumetl.jobs.export_token_transfers_job import ExportTokenTransfersJob
+from ethereumetl.jobs.export_traces_job import ExportTracesJob
 from ethereumetl.jobs.exporters.blocks_and_transactions_item_exporter import blocks_and_transactions_item_exporter
+from ethereumetl.jobs.exporters.contracts_item_exporter import contracts_item_exporter
 from ethereumetl.jobs.exporters.receipts_and_logs_item_exporter import receipts_and_logs_item_exporter
 from ethereumetl.jobs.exporters.token_transfers_item_exporter import token_transfers_item_exporter
+from ethereumetl.jobs.exporters.traces_item_exporter import traces_item_exporter
+from ethereumetl.jobs.extract_contracts_job import ExtractContractsJob
 from ethereumetl.jobs.extract_token_transfers_job import ExtractTokenTransfersJob
 from ethereumetl.providers.auto import get_provider_from_uri
 from ethereumetl.service.aws_service import AWSService
@@ -64,8 +69,104 @@ def remove_if_exists(path: str):
         shutil.rmtree(path)
 
 
+def export_traces_and_contracts_common(partitions, output_dir, provider_uri, max_workers, batch_size, bucket):
+    aws_service = AWSService(s3_bucket=bucket)
+    csv.field_size_limit(sys.maxsize)
+
+    for batch_start_block, batch_end_block, partition_dir in partitions:
+        # # # start # # #
+
+        start_time = time()
+
+        if os.path.isdir(output_dir):
+            shutil.rmtree(output_dir)
+
+        padded_batch_start_block = str(batch_start_block).zfill(8)
+        padded_batch_end_block = str(batch_end_block).zfill(8)
+        block_range = '{padded_batch_start_block}-{padded_batch_end_block}'.format(
+            padded_batch_start_block=padded_batch_start_block,
+            padded_batch_end_block=padded_batch_end_block,
+        )
+        file_name_suffix = '{padded_batch_start_block}_{padded_batch_end_block}'.format(
+            padded_batch_start_block=padded_batch_start_block,
+            padded_batch_end_block=padded_batch_end_block,
+        )
+
+        # # # traces # # #
+
+        traces_output_dir = '{output_dir}/traces{partition_dir}'.format(
+            output_dir=output_dir,
+            partition_dir=partition_dir
+        )
+        os.makedirs(os.path.dirname(traces_output_dir), exist_ok=True)
+
+        traces_file = '{traces_output_dir}/traces_{file_name_suffix}.csv'.format(
+            traces_output_dir=traces_output_dir,
+            file_name_suffix=file_name_suffix
+        )
+        logger.info('Exporting traces from blocks {block_range} to {traces_file}'.format(
+            block_range=block_range,
+            traces_file=traces_file,
+        ))
+
+        job = ExportTracesJob(
+            start_block=batch_start_block,
+            end_block=batch_end_block,
+            batch_size=batch_size,
+            web3=ThreadLocalProxy(lambda: build_web3(get_provider_from_uri(provider_uri))),
+            item_exporter=traces_item_exporter(traces_file),
+            max_workers=max_workers,
+            include_genesis_traces=False,
+            include_daofork_traces=False
+        )
+        job.run()
+
+        # # # contracts # # #
+
+        contract_output_dir = '{output_dir}/contract{partition_dir}'.format(
+            output_dir=output_dir,
+            partition_dir=partition_dir,
+        )
+        os.makedirs(os.path.dirname(contract_output_dir), exist_ok=True)
+
+        contract_file = '{contract_output_dir}/contract_{file_name_suffix}.csv'.format(
+            contract_output_dir=contract_output_dir,
+            file_name_suffix=file_name_suffix
+        )
+
+        logger.info('Exporting contracts and logs from blocks {block_range} to {contract_file}'.format(
+            block_range=block_range,
+            contract_file=contract_file,
+        ))
+
+        with smart_open(traces_file, 'r') as traces_file:
+            traces_iterable = csv.DictReader(traces_file)
+
+            job = ExtractContractsJob(
+                traces_iterable=traces_iterable,
+                batch_size=batch_size,
+                max_workers=max_workers,
+                item_exporter=contracts_item_exporter(contract_file)
+            )
+
+            job.run()
+
+        # # # upload all to s3 # # #
+        aws_service.copy_dict_to_s3(output_dir)
+        shutil.rmtree(output_dir)
+
+        # # # finish # # #
+        end_time = time()
+        time_diff = round(end_time - start_time, 5)
+        logger.info('Exporting traces and contracts {block_range} took {time_diff} seconds'.format(
+            block_range=block_range,
+            time_diff=time_diff,
+        ))
+
+
 def export_all_common(partitions, output_dir, provider_uri, max_workers, batch_size, bucket):
     aws_service = AWSService(s3_bucket=bucket)
+    csv.field_size_limit(sys.maxsize)
 
     for batch_start_block, batch_end_block, partition_dir in partitions:
         # # # start # # #
