@@ -169,7 +169,8 @@ def export_traces_and_contracts_common(partitions, output_dir, provider_uri, max
         ))
 
 
-def export_all_common(partitions, output_dir, provider_uri, max_workers, batch_size, bucket):
+def export_all_common(partitions, output_dir, provider_uri, max_workers, batch_size, receipt_log_batch_size,
+                      receipt_log_max_workers, bucket):
     if bucket is not None:
         aws_service = AWSService(s3_bucket=bucket)
     else:
@@ -284,9 +285,9 @@ def export_all_common(partitions, output_dir, provider_uri, max_workers, batch_s
         with smart_open(transaction_hashes_file, 'r') as transaction_hashes:
             job = ExportReceiptsJob(
                 transaction_hashes_iterable=(transaction_hash.strip() for transaction_hash in transaction_hashes),
-                batch_size=batch_size,
+                batch_size=receipt_log_batch_size,
                 batch_web3_provider=ThreadLocalProxy(lambda: get_provider_from_uri(provider_uri, batch=True)),
-                max_workers=max_workers,
+                max_workers=receipt_log_max_workers,
                 item_exporter=receipts_and_logs_item_exporter(receipts_file, logs_file),
                 export_receipts=receipts_file is not None,
                 export_logs=logs_file is not None)

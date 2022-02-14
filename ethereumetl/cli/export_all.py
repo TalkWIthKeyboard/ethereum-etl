@@ -144,11 +144,16 @@ def get_partitions(start, end, partition_batch_size, provider_uri, job_name):
 @click.option('-w', '--max-workers', default=5, show_default=True, type=int, help='The maximum number of workers.')
 @click.option('-B', '--export-batch-size', default=100, show_default=True, type=int,
               help='The number of requests in JSON RPC batches.')
+@click.option('-rb', '--receipt-log-batch-size', default=100, show_default=True, type=int,
+              help='The number of receipts and logs to export at a time.')
+@click.option('-rw', '--receipt-log-max-workers', default=5, show_default=True, type=int,
+              help='The maximum number of extract receipts and logs workers.')
 @click.option('-sb', '--s3-bucket', required=False, type=str)
 @click.option('-c', '--chain', default='ethereum', show_default=True, type=str, help='The chain network to connect to.')
-def export_all(start, end, partition_batch_size, provider_uri, output_dir, max_workers, export_batch_size, s3_bucket,
-               chain='ethereum'):
+def export_all(start, end, partition_batch_size, provider_uri, output_dir, max_workers, export_batch_size,
+               receipt_log_batch_size, receipt_log_max_workers, s3_bucket, chain='ethereum'):
     """Exports all data for a range of blocks."""
     provider_uri = check_classic_provider_uri(chain, provider_uri)
     export_all_common(get_partitions(start, end, partition_batch_size, provider_uri, 'export_all'),
-                      output_dir, provider_uri, max_workers, export_batch_size, s3_bucket)
+                      output_dir, provider_uri, max_workers, export_batch_size, receipt_log_batch_size,
+                      receipt_log_max_workers, s3_bucket)
