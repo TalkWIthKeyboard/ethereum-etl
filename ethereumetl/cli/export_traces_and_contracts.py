@@ -24,5 +24,6 @@ def export_traces_and_contracts(start, end, partition_batch_size, provider_uri, 
                                 export_batch_size, s3_bucket, chain='ethereum'):
     """Exports traces and contracts for a range of blocks."""
     provider_uri = check_classic_provider_uri(chain, provider_uri)
-    export_traces_and_contracts_common(get_partitions(start, end, partition_batch_size, provider_uri),
-                                       output_dir, provider_uri, max_workers, export_batch_size, s3_bucket)
+    export_traces_and_contracts_common(
+        get_partitions(start, end, partition_batch_size, provider_uri, 'export_traces_and_contracts'),
+        output_dir, provider_uri, max_workers, export_batch_size, s3_bucket)

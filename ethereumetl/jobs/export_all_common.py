@@ -70,7 +70,11 @@ def remove_if_exists(path: str):
 
 
 def export_traces_and_contracts_common(partitions, output_dir, provider_uri, max_workers, batch_size, bucket):
-    aws_service = AWSService(s3_bucket=bucket)
+    if bucket is not None:
+        aws_service = AWSService(s3_bucket=bucket)
+    else:
+        aws_service = None
+
     csv.field_size_limit(sys.maxsize)
 
     for batch_start_block, batch_end_block, partition_dir in partitions:
@@ -152,7 +156,8 @@ def export_traces_and_contracts_common(partitions, output_dir, provider_uri, max
             job.run()
 
         # # # upload all to s3 # # #
-        aws_service.copy_dict_to_s3(output_dir)
+        if aws_service is not None:
+            aws_service.copy_dict_to_s3(output_dir)
         shutil.rmtree(output_dir)
 
         # # # finish # # #
@@ -165,7 +170,11 @@ def export_traces_and_contracts_common(partitions, output_dir, provider_uri, max
 
 
 def export_all_common(partitions, output_dir, provider_uri, max_workers, batch_size, bucket):
-    aws_service = AWSService(s3_bucket=bucket)
+    if bucket is not None:
+        aws_service = AWSService(s3_bucket=bucket)
+    else:
+        aws_service = None
+
     csv.field_size_limit(sys.maxsize)
 
     for batch_start_block, batch_end_block, partition_dir in partitions:
@@ -323,7 +332,10 @@ def export_all_common(partitions, output_dir, provider_uri, max_workers, batch_s
 
         # # # upload all to s3 # # #
         shutil.rmtree(os.path.dirname(cache_output_dir))
-        aws_service.copy_dict_to_s3(output_dir)
+
+        if aws_service is not None:
+            aws_service.copy_dict_to_s3(output_dir)
+
         shutil.rmtree(output_dir)
 
         # # # finish # # #

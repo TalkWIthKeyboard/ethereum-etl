@@ -19,8 +19,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
-
+import os
 import re
 from datetime import datetime, timedelta
 
@@ -54,20 +53,45 @@ def is_block_range(start, end):
             end.isdigit() and 0 <= int(end) <= 99999999)
 
 
-def get_partitions(start, end, partition_batch_size, provider_uri):
+def get_cache_start_at(job_name, start, end):
+    cache_file_name = f'/tmp/ethereum-etl/cache/{job_name}_{start}_{end}'
+    os.makedirs(os.path.dirname(cache_file_name), exist_ok=True)
+
+    if not os.path.isfile(cache_file_name):
+        return start
+    else:
+        with open(cache_file_name, 'r') as f:
+            content = f.read()
+            if len(content) == 0:
+                return start
+            else:
+                return content.replace('\n', '')
+
+
+def save_start_at_cache(job_name, start, end, next_start):
+    cache_file_name = f'/tmp/ethereum-etl/cache/{job_name}_{start}_{end}'
+    os.makedirs(os.path.dirname(cache_file_name), exist_ok=True)
+
+    with open(cache_file_name, 'w+') as f:
+        f.write(str(next_start))
+
+
+def get_partitions(start, end, partition_batch_size, provider_uri, job_name):
+    cached_next_start = get_cache_start_at(job_name, start, end)
+
     """Yield partitions based on input data type."""
-    if is_date_range(start, end) or is_unix_time_range(start, end):
-        if is_date_range(start, end):
-            start_date = datetime.strptime(start, '%Y-%m-%d').date()
+    if is_date_range(cached_next_start, end) or is_unix_time_range(cached_next_start, end):
+        if is_date_range(cached_next_start, end):
+            start_date = datetime.strptime(cached_next_start, '%Y-%m-%d').date()
             end_date = datetime.strptime(end, '%Y-%m-%d').date()
 
-        elif is_unix_time_range(start, end):
-            if len(start) == 10 and len(end) == 10:
-                start_date = datetime.utcfromtimestamp(int(start)).date()
+        elif is_unix_time_range(cached_next_start, end):
+            if len(cached_next_start) == 10 and len(end) == 10:
+                start_date = datetime.utcfromtimestamp(int(cached_next_start)).date()
                 end_date = datetime.utcfromtimestamp(int(end)).date()
 
-            elif len(start) == 13 and len(end) == 13:
-                start_date = datetime.utcfromtimestamp(int(start) / 1e3).date()
+            elif len(cached_next_start) == 13 and len(end) == 13:
+                start_date = datetime.utcfromtimestamp(int(cached_next_start) / 1e3).date()
                 end_date = datetime.utcfromtimestamp(int(end) / 1e3).date()
 
         day = timedelta(days=1)
@@ -82,14 +106,17 @@ def get_partitions(start, end, partition_batch_size, provider_uri):
             yield batch_start_block, batch_end_block, partition_dir
             start_date += day
 
-    elif is_block_range(start, end):
-        start_block = int(start)
+    # cache the current start at
+    elif is_block_range(cached_next_start, end):
+        start_block = int(cached_next_start)
         end_block = int(end)
 
         for batch_start_block in range(start_block, end_block + 1, partition_batch_size):
             batch_end_block = batch_start_block + partition_batch_size - 1
             if batch_end_block > end_block:
                 batch_end_block = end_block
+
+            save_start_at_cache(job_name, start, end, batch_start_block)
 
             padded_batch_start_block = str(batch_start_block).zfill(8)
             padded_batch_end_block = str(batch_end_block).zfill(8)
@@ -99,6 +126,7 @@ def get_partitions(start, end, partition_batch_size, provider_uri):
             )
             yield batch_start_block, batch_end_block, partition_dir
 
+        save_start_at_cache(job_name, start, end, end_block + 1)
     else:
         raise ValueError('start and end must be either block numbers or ISO dates or Unix times')
 
@@ -116,11 +144,11 @@ def get_partitions(start, end, partition_batch_size, provider_uri):
 @click.option('-w', '--max-workers', default=5, show_default=True, type=int, help='The maximum number of workers.')
 @click.option('-B', '--export-batch-size', default=100, show_default=True, type=int,
               help='The number of requests in JSON RPC batches.')
-@click.option('-sb', '--s3-bucket', default='ifcrypto', show_default=True, type=str)
+@click.option('-sb', '--s3-bucket', required=False, type=str)
 @click.option('-c', '--chain', default='ethereum', show_default=True, type=str, help='The chain network to connect to.')
 def export_all(start, end, partition_batch_size, provider_uri, output_dir, max_workers, export_batch_size, s3_bucket,
                chain='ethereum'):
     """Exports all data for a range of blocks."""
     provider_uri = check_classic_provider_uri(chain, provider_uri)
-    export_all_common(get_partitions(start, end, partition_batch_size, provider_uri),
+    export_all_common(get_partitions(start, end, partition_batch_size, provider_uri, 'export_all'),
                       output_dir, provider_uri, max_workers, export_batch_size, s3_bucket)
